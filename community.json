@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "name": "mf_follow",
+  "min_version": "1.0.0",
+  "needs_lila": false,
+  "licence": "GPLv3",
+  "description": "Envelope following for audio: attack/release peak and RMS kernels in Kinesis, a block-level EnvelopeProcessor with feature, signal and gain outputs and sidechain input, and a per-sample EnvelopeFollower node."
+}
