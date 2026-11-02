@@ -178,6 +178,21 @@ void processor_tests()
         proc->set_skip_silent_blocks(false);
         proc->processing_function(loud);
         check(proc->feature(loud) < 0.9, "a silent block releases otherwise", proc->feature(loud), 0.9);
+
+        proc->on_detach(quiet);
+        check_near(proc->feature(quiet), 0.0, 1e-12, "detaching forgets that buffer's level");
+        check(proc->feature(loud) > 0.0, "detaching one buffer keeps the others", proc->feature(loud), 0.0);
+    }
+
+    {
+        auto proc = std::make_shared<EnvelopeProcessor>(0.0, 0.1);
+        auto buffer = std::make_shared<AudioBuffer>(0);
+        std::ranges::fill(buffer->get_data(), 0.4);
+        proc->set_silence_after(true);
+        proc->on_attach(buffer);
+        proc->processing_function(buffer);
+        check_near(proc->feature(buffer), 0.4, 1e-12, "silence_after still measures the block");
+        check(std::ranges::all_of(buffer->get_data(), [](double v) { return v == 0.0; }), "silence_after zeroes the block");
     }
 
     {

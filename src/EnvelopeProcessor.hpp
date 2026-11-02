@@ -4,6 +4,8 @@
 
 #include <MayaFlux/Buffers/AudioBuffer.hpp>
 #include <MayaFlux/Buffers/BufferProcessor.hpp>
+#include <MayaFlux/Transitive/Memory/FlatMap.hpp>
+#include <MayaFlux/Transitive/Memory/SnapshotCell.hpp>
 
 namespace MayaFlux::Buffers {
 
@@ -33,7 +35,9 @@ enum class EnvelopeOutput : uint8_t {
  *
  * Parameters can be set from any thread and take effect at the next block.
  * feature() and latest() can be read from any thread. The observer runs on
- * the processing thread.
+ * the processing thread. Per-buffer state and the sidechain are held in
+ * Memory::SnapshotCell, so neither the processing thread nor a reader ever
+ * takes a lock.
  */
 class EnvelopeProcessor : public BufferProcessor {
 public:
@@ -55,9 +59,11 @@ public:
     /**
      * @brief Follows an audio input channel.
      *
-     * Makes an input listener buffer that is not routed to any output, so the
-     * microphone does not reach the speakers, attaches a FEATURE processor and
-     * turns on silent-block skipping (see set_skip_silent_blocks).
+     * An input listener's processing chain only runs while the buffer sits on
+     * an output channel, so this registers one there, attaches a FEATURE
+     * processor to the buffer's own chain, and has it silence each block after
+     * measuring it so the microphone does not reach the speakers. Silent-block
+     * skipping is turned on as well (see set_skip_silent_blocks).
      */
     static std::shared_ptr<EnvelopeProcessor> listen(
         uint32_t channel = 0,
@@ -100,6 +106,14 @@ public:
     void set_skip_silent_blocks(bool skip) { m_skip_silent.store(skip, std::memory_order_relaxed); }
 
     /**
+     * @brief Zero the buffer after measuring it, in EnvelopeOutput::FEATURE.
+     *
+     * For a buffer that has to sit on an output channel only to be processed,
+     * such as an input listener, so it measures without being heard.
+     */
+    void set_silence_after(bool silence) { m_silence_after.store(silence, std::memory_order_relaxed); }
+
+    /**
      * @brief Called with the envelope at the end of each block, on the processing thread.
      *
      * Same threading rule as set_gain_law.
@@ -128,30 +142,39 @@ public:
 
 private:
     struct State {
+        std::weak_ptr<Buffer> owner;
         std::vector<double> coefs;
         std::vector<double> envelope;
         uint64_t version { 0 };
+        double sample_rate { 0.0 };
         std::atomic<double> feature { 0.0 };
+
+        [[nodiscard]] bool belongs_to(const std::shared_ptr<Buffer>& buffer) const
+        {
+            return !owner.owner_before(buffer) && !buffer.owner_before(owner);
+        }
     };
+
+    /// Keyed by address for lookup; State::owner confirms the entry still belongs to that buffer.
+    using States = Memory::FlatMap<const Buffer*, std::shared_ptr<State>>;
 
     std::atomic<double> m_attack;
     std::atomic<double> m_release;
     std::atomic<Kinesis::Discrete::EnvelopeMode> m_mode;
     std::atomic<EnvelopeOutput> m_output;
     std::atomic<bool> m_skip_silent { false };
+    std::atomic<bool> m_silence_after { false };
     std::atomic<uint64_t> m_version { 1 };
     std::atomic<double> m_latest { 0.0 };
-    std::atomic<std::weak_ptr<AudioBuffer>> m_sidechain;
+
+    Memory::SnapshotCell<States> m_states;
+    Memory::SnapshotCell<std::weak_ptr<AudioBuffer>> m_sidechain;
 
     GainLaw m_gain_law;
     Observer m_observer;
-    double m_sample_rate { 48000.0 };
 
-    /// Written only on the processing thread, under m_states_mutex; read from other threads under it.
-    std::unordered_map<const Buffer*, std::unique_ptr<State>> m_states;
-    mutable std::mutex m_states_mutex;
-
-    State& state_for(const Buffer* buffer);
+    [[nodiscard]] std::shared_ptr<State> find_state(const std::shared_ptr<Buffer>& buffer) const;
+    std::shared_ptr<State> state_for(const std::shared_ptr<Buffer>& buffer);
     void refresh(State& state) const;
 };
 
