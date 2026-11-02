@@ -352,3 +352,77 @@ MF_EXAMPLE=perform ./build/FollowExamples   # a word as a groove: orbits, a stri
 ```
 
 Read them in that order. Each adds one idea to the ones before.
+
+---
+
+## 10. Starting small: the Drawn voice project
+
+`FollowExamples` shows everything at once, which is too many controls to play with. `DrawnVoice` is the opposite: one window and four controls.
+
+| Control | What it does |
+| ------- | ------------ |
+| vowel | Draw a line over time. Height picks the vowel: u at the bottom, then o, a, e, i at the top. |
+| pitch | Draw the intonation, low to high. |
+| play | On or off. |
+| length | Seconds for one pass of the drawing. |
+
+Underneath it is only the talk-box in manual mode. No microphone is used:
+
+```cpp
+auto buzz = std::make_shared<Nodes::Generator::GlottalSource>(120.0F);
+auto voice = std::make_shared<Nodes::Network::FormantTransfer>(
+    std::make_shared<Buffers::FormantProcessor>(), buzz, { .sample_rate = 48000.0, .glide = 0.02 });
+
+// every frame, at playhead t:
+voice->set_manual(formants_at(vowel_line.at(t)), 0.8);
+buzz->set_frequency(pitch_at(pitch_line.at(t)));
+```
+
+`formants_at` blends the F1, F2 and F3 of the two nearest vowels, so a line between two heights glides between two vowels.
+
+Start a new project the same way: copy the project skeleton, clone the module into `community/`, and bring in only the pieces you need. Add a control only when you miss it.
+
+### The look
+
+The colours come from the pazyanti spiral study: a dark ground, thin lines, and colour made of three slow sine waves that drift apart, never brighter than 0.22.
+
+```cpp
+float wave(float step, float speed, float offset)
+{
+    return 0.22F * std::max(std::sin(glm::radians(speed * step + offset)), 0.0F);
+}
+
+glm::vec3 colour(float step, float phase)
+{
+    return { wave(step, 1.F, phase), wave(step, 5.F, 9.F + phase), wave(step, 9.F, 18.F + phase) };
+}
+```
+
+In `DrawnVoice` the spiral sits behind the drawing in the same window. It is a `MeshWriterNode` minted in wireframe:
+
+```cpp
+auto spiral = vega.MeshWriterNode();
+spiral->set_mesh(spiral_vertices(), spiral_indices());
+auto form = vega.mint(StructureConfig::Object {
+    .writer = spiral,
+    .render = { .target_window = window,
+                .polygon_mode = Portal::Graphics::PolygonMode::LINE,
+                .cull_mode = Portal::Graphics::CullMode::NONE },
+});
+```
+
+The spiral tells you what is happening without another control:
+
+- It turns once per pass of the drawing, so it is the playhead: `set_geometry_transform_source` returns a rotation from `t`.
+- Its colour phase follows the vowel, and drifts faster at higher pitch: `set_mesh_vertices` with recoloured vertices, 30 times a second, only when the phase has moved.
+
+Create the spiral before the controls so they draw on top of it.
+
+### More things that cost time
+
+| Symptom | Cause | What to do |
+| ------- | ----- | ---------- |
+| `Nexus::Fabric` does not compile with two arguments | In 1.0 it also takes the buffer manager | `Fabric(scheduler, event_manager, buffer_manager, cell_size)` |
+| A sampler will not play backwards with a negative speed | Sampler speeds must be above zero | Play through a time map with a negative velocity, as `TapSet` does |
+| `StreamSliceProcessor::load index exceeds slot count` | Voice slots are allocated in order | Load every voice once when the sampler is made |
+| Too many controls to enjoy | Every feature got a fader | Start from one window and three or four controls |
