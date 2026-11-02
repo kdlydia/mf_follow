@@ -4,6 +4,8 @@ A MayaFlux community module for following a voice or any signal: how loud it is,
 
 It measures loudness sample by sample or block by block, with separate attack and release times, in peak or RMS mode. One Kinesis kernel does the measuring; a buffer processor and a node run it for the two ways MayaFlux processes audio, and they produce exactly the same numbers on the same samples. It tracks the first three formants of a voice with linear prediction and tells speech from steady noise. And it passes those formants through a `RelationNetwork` into a `ResonatorNetwork`, so any carrier speaks with your vowels.
 
+New here? Start with [TUTORIAL.md](TUTORIAL.md).
+
 Needs MayaFlux 1.0.0 or newer. Does not need Lila. Nothing in it reaches the engine through `API/`: what needs a buffer manager takes one.
 
 ---
