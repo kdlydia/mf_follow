@@ -51,6 +51,9 @@ std::shared_ptr<SliceSequencer::Material> SliceSequencer::build(const std::share
     for (const uint32_t channel : m_config.channels) {
         auto sampler = std::make_shared<SamplingPipeline>(take, m_manager, m_scheduler, channel, m_config.buffer_size);
         sampler->build();
+        // Voice slots are allocated in order; make them all now so any voice can be played first.
+        for (size_t voice = 0; voice < m_config.voices; ++voice)
+            (void)sampler->load(voice, Kakshya::StreamSlice::from_stream(take, static_cast<uint8_t>(voice)));
         material->samplers.push_back(std::move(sampler));
     }
     return material;
