@@ -3,6 +3,7 @@
 #include "Envelope.hpp"
 
 #include <MayaFlux/Buffers/AudioBuffer.hpp>
+#include <MayaFlux/Buffers/BufferManager.hpp>
 #include <MayaFlux/Buffers/BufferProcessor.hpp>
 #include <MayaFlux/Transitive/Memory/FlatMap.hpp>
 #include <MayaFlux/Transitive/Memory/SnapshotCell.hpp>
@@ -57,15 +58,20 @@ public:
         EnvelopeOutput output = EnvelopeOutput::FEATURE);
 
     /**
-     * @brief Follows an audio input channel.
+     * @brief Follows an audio input channel of @p manager.
      *
      * An input listener's processing chain only runs while the buffer sits on
-     * an output channel, so this registers one there, attaches a FEATURE
-     * processor to the buffer's own chain, and has it silence each block after
-     * measuring it so the microphone does not reach the speakers. Silent-block
-     * skipping is turned on as well (see set_skip_silent_blocks).
+     * an output channel, so this adds one there, registers it as a listener on
+     * the same input channel, attaches a FEATURE processor to the buffer's own
+     * chain, and has it silence each block after measuring it so the
+     * microphone does not reach the speakers. Silent-block skipping is turned
+     * on as well (see set_skip_silent_blocks).
+     *
+     * The manager is passed in rather than taken from the engine, so this
+     * works with whatever manager the caller initialised.
      */
     static std::shared_ptr<EnvelopeProcessor> listen(
+        BufferManager& manager,
         uint32_t channel = 0,
         double attack = 0.01,
         double release = 0.1,

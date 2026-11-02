@@ -52,7 +52,7 @@ void settings()
 
 void compose()
 {
-    auto level = Buffers::EnvelopeProcessor::listen(0, 0.005, 0.2);
+    auto level = Buffers::EnvelopeProcessor::listen(*get_buffer_manager(), 0, 0.005, 0.2);
 
     schedule_metro(0.1, [level] {
         std::printf("%.1f dB\n", level->latest_db());
@@ -60,7 +60,7 @@ void compose()
 }
 ```
 
-`listen()` makes an input listener buffer on the output channel, because a buffer's processing chain only runs there, and attaches the processor to that buffer's own chain. The processor zeroes each block after measuring it (`set_silence_after`), so the microphone does not reach the speakers. It also skips the empty blocks the engine hands an input listener between microphone deliveries; following those would halve the level.
+`listen()` takes the `BufferManager` to use, so it never reaches for the engine itself. It makes an input listener buffer on the output channel, because a buffer's processing chain only runs there, and attaches the processor to that buffer's own chain. The processor zeroes each block after measuring it (`set_silence_after`), so the microphone does not reach the speakers. It also skips the empty blocks the engine hands an input listener between microphone deliveries; following those would halve the level.
 
 ### Read the level of a buffer that keeps playing
 

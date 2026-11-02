@@ -1,6 +1,5 @@
 #include "EnvelopeProcessor.hpp"
 
-#include <MayaFlux/API/Graph.hpp>
 #include <MayaFlux/Buffers/BufferProcessingChain.hpp>
 #include <MayaFlux/Buffers/BufferSpec.hpp>
 
@@ -26,9 +25,12 @@ EnvelopeProcessor::EnvelopeProcessor(double attack, double release, D::EnvelopeM
 }
 
 std::shared_ptr<EnvelopeProcessor> EnvelopeProcessor::listen(
-    uint32_t channel, double attack, double release, D::EnvelopeMode mode)
+    BufferManager& manager, uint32_t channel, double attack, double release, D::EnvelopeMode mode)
 {
-    auto input = create_input_listener_buffer(channel, true);
+    auto input = std::make_shared<AudioBuffer>(channel);
+    manager.add_buffer(input, ProcessingToken::AUDIO_BACKEND, channel);
+    manager.register_input_listener(input, channel);
+
     auto processor = std::make_shared<EnvelopeProcessor>(attack, release, mode, EnvelopeOutput::FEATURE);
     processor->set_skip_silent_blocks(true);
     processor->set_silence_after(true);
