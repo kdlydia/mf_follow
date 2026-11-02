@@ -24,6 +24,7 @@ Needs MayaFlux 1.0.0 or newer. Does not need Lila. Nothing in it reaches the eng
 | `RingRecorder` | `Buffers` | `BufferProcessor` | Keeps the last seconds of a buffer in a circular `DynamicSoundStream` (with `append_frames`, so lag taps and `snapshot` see its head) and cuts takes. Requests and takes travel on `Memory::SweepList`; the cut happens on the processing thread. |
 | `VoiceInput` | `Buffers` | listener bundle | One microphone through one buffer, in a fixed order: `RingRecorder`, `EnvelopeProcessor`, `FormantProcessor` (which silences last). Takes the `BufferManager`. |
 | `Looper` | `Kriya` | `TapSet` owner | Loops takes in numbered slots with per-slot speed (negative is backwards), level and stutter, and echoes a live ring with lag taps. Takes the `BufferManager`, `TaskScheduler` and buffer size. |
+| `SliceSequencer` | `Kriya` | `pattern` + `SamplingPipeline` | Cuts a take into chops and plays them on a 16th-note clock from a step grid (velocity per chop and step, pitch per step, reverse per chop) and from a queue any thread can push hits onto, quantised to the next step. Tempo and swing per bar. Takes are swapped live. |
 | `FormantTransfer` | `Nodes::Network` | `RelationNetwork` + `ResonatorNetwork` | A talk-box. The relation glides the tracked formants (with `envelope_follow` in `Derive`), smooths the loudness and gates on voicing; the resonators shape any carrier with them. Shift the formants, or draw a vowel by hand. |
 
 Nodes are the per-sample path and buffers are the per-block path. Neither is built on the other: both call the same kernel.
@@ -51,6 +52,7 @@ mf_follow/
         RingRecorder.hpp / .cpp         # ring of the recent past, takes
         VoiceInput.hpp / .cpp           # microphone: record, follow, track
         Looper.hpp / .cpp               # TapSet loops and echoes
+        SliceSequencer.hpp / .cpp       # chops of a take, played in time
     test/
         CMakeLists.txt
         test_mf_follow.cpp              # envelope
@@ -173,6 +175,23 @@ void compose()
 ```
 
 Mark a moment with `recorder()->frames()` and cut from it with `request_take_since(mark, preroll)`: with `FormantTransfer::on_voice` start and stop, every word you say becomes a take. `looper->speed(slot, -1.0)` plays a loop backwards from where it is. The managers are the caller's; nothing here reaches the engine itself.
+
+### Play a take as a groove
+
+```cpp
+auto groove = std::make_shared<Kriya::SliceSequencer>(*get_buffer_manager(), *get_scheduler(),
+    Kriya::SliceSequencerConfig { .slices = 4, .steps = 16, .bpm = 100.0, .buffer_size = Config::get_buffer_size() });
+groove->set_take(take);                     // for example from RingRecorder::collect()
+groove->set_hit(0, 0, 1.0);                 // chop 1 on the downbeat
+groove->set_hit(2, 4, 0.8);
+groove->set_reverse(2, true);               // chop 3 backwards
+groove->set_pitch(12, 2.0);                 // step 13 an octave up
+groove->start();
+
+groove->queue({ .slice = 1, .velocity = 0.9, .speed = 1.5 });   // from anywhere: plays on the next step
+```
+
+The clock is a `Kriya::pattern` with a duration source called once per bar, so `set_tempo` and `set_swing` land on the next bar line. Queued hits are how gestures, `Nexus` events or other patterns play in time with the grid. Reversed hits read the chop through a negative-velocity time map, as `TapSet` plays backwards.
 
 ### Use the kernel directly
 
