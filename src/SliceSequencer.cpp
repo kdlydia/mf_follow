@@ -33,9 +33,22 @@ SliceSequencer::~SliceSequencer()
 void SliceSequencer::set_take(std::shared_ptr<Kakshya::DynamicSoundStream> take)
 {
     auto material = take ? build(take) : nullptr;
+
+    std::shared_ptr<Material> previous;
+    if (const auto current = m_material.read(); current && *current)
+        previous = *current;
+
     m_take_frames.store(material ? material->frames : 0, std::memory_order_relaxed);
     m_take_seconds.store(material ? static_cast<double>(material->frames) / material->rate : 0.0, std::memory_order_relaxed);
     m_material.publish(std::move(material));
+
+    if (previous) {
+        for (const auto& sampler : previous->samplers)
+            for (size_t voice = 0; voice < m_config.voices; ++voice)
+                sampler->stop(voice);
+        std::lock_guard lock(m_retire_mutex);
+        m_retired.push_back(std::move(previous));
+    }
 }
 
 std::shared_ptr<SliceSequencer::Material> SliceSequencer::build(const std::shared_ptr<Kakshya::DynamicSoundStream>& take) const

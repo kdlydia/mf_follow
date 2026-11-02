@@ -52,8 +52,11 @@ struct SliceHit {
  * the way TapSet plays backwards.
  *
  * The take can be replaced while it plays: the material lives in a Memory::SnapshotCell and the
- * pattern reads it under a guard. The queue is a Memory::SweepList. Grid, pitch, tempo and the rest
- * are atomics. The buffer manager and scheduler are the caller's.
+ * pattern reads it under a guard. A replaced take's voices are stopped and its samplers kept until
+ * the sequencer is destroyed, since a SamplingPipeline freed while the engine runs can still be in use
+ * on the processing thread. A spoken word costs well under a megabyte. The queue is a
+ * Memory::SweepList. Grid, pitch, tempo and the rest are atomics. The buffer manager and scheduler
+ * are the caller's.
  */
 class SliceSequencer {
 public:
@@ -127,6 +130,11 @@ private:
     SliceSequencerConfig m_config;
 
     Memory::SnapshotCell<std::shared_ptr<Material>> m_material;
+
+    /// Materials replaced by set_take, kept rather than freed: a SamplingPipeline destroyed while the
+    /// engine runs can still be in use on the processing thread. Only set_take touches this.
+    std::vector<std::shared_ptr<Material>> m_retired;
+    std::mutex m_retire_mutex;
     std::atomic<double> m_take_seconds { 0.0 };
     std::atomic<uint64_t> m_take_frames { 0 };
 
