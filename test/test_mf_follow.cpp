@@ -5,6 +5,7 @@
 #include "Envelope.hpp"
 #include "EnvelopeFollower.hpp"
 #include "EnvelopeProcessor.hpp"
+#include "RingRecorder.hpp"
 
 #include <cstdio>
 #include <numbers>
@@ -281,6 +282,63 @@ void node_tests()
     }
 }
 
+void recorder_tests()
+{
+    std::printf("\n-- RingRecorder --\n");
+
+    auto recorder = std::make_shared<MayaFlux::Buffers::RingRecorder>(0.5, k_rate);
+    auto buffer = std::make_shared<AudioBuffer>(0);
+    const size_t block = buffer->get_data().size();
+
+    // A ramp, so every recorded sample says where it came from.
+    double next = 0.0;
+    const auto feed = [&](size_t blocks) {
+        for (size_t b = 0; b < blocks; ++b) {
+            for (double& v : buffer->get_data())
+                v = (next += 1.0);
+            recorder->processing_function(buffer);
+        }
+    };
+
+    feed(10);
+    check(recorder->frames() == 10 * block, "frames() counts every recorded sample", static_cast<double>(recorder->frames()), 10.0 * block);
+    check(recorder->capacity() == static_cast<uint64_t>(0.5 * k_rate), "capacity is seconds times rate");
+
+    const uint64_t mark = recorder->frames();
+    const uint64_t id = recorder->request_take(3 * block);
+    check(!recorder->collect().has_value(), "a take is cut on the processing thread, not on request");
+    feed(1);
+    auto take = recorder->collect();
+    check(take.has_value() && take->id == id && take->stream, "the take arrives after the next block, with its id");
+    if (take && take->stream) {
+        const auto frames = take->stream->get_channel_frames(0, 0, take->stream->get_num_frames());
+        check(take->stream->get_num_frames() == 3 * block, "the take has the frames asked for",
+            static_cast<double>(take->stream->get_num_frames()), 3.0 * block);
+        check(!frames.empty() && frames.back() == next && frames.front() == next - 3.0 * block + 1.0,
+            "the take holds exactly the last samples, oldest first", frames.empty() ? 0.0 : frames.back(), next);
+    }
+
+    feed(4);
+    const uint64_t since = recorder->request_take_since(mark, block);
+    feed(1);
+    take = recorder->collect();
+    check(take && take->id == since && take->stream && take->stream->get_num_frames() == 5 * block + block,
+        "request_take_since covers the frames since the mark plus the preroll",
+        take && take->stream ? static_cast<double>(take->stream->get_num_frames()) : 0.0, 6.0 * block);
+
+    feed(100);
+    (void)recorder->request_take(10 * recorder->capacity());
+    feed(1);
+    take = recorder->collect();
+    check(take && take->stream && take->stream->get_num_frames() == recorder->capacity(), "a take never exceeds the ring");
+
+    const uint64_t before = recorder->frames();
+    recorder->set_skip_silent_blocks(true);
+    std::ranges::fill(buffer->get_data(), 0.0);
+    recorder->processing_function(buffer);
+    check(recorder->frames() == before, "an empty block is skipped when asked");
+}
+
 } // namespace
 
 int main()
@@ -288,6 +346,7 @@ int main()
     kernel_tests();
     processor_tests();
     node_tests();
+    recorder_tests();
 
     std::printf("\n%d of %d checks passed: %s\n", g_checks - g_failures, g_checks, g_failures == 0 ? "PASS" : "FAIL");
     return g_failures == 0 ? 0 : 1;

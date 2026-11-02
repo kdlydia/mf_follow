@@ -21,6 +21,9 @@ Needs MayaFlux 1.0.0 or newer. Does not need Lila. Nothing in it reaches the eng
 | `FormantTracker` | `Kinesis` | stateful class | Frame in, `FormantReading` (F1..F3, voiced, rms) out. No buffers, no threads. |
 | `FormantProcessor` | `Buffers` | `BufferProcessor` | Runs a `FormantTracker` on the audio passing through a buffer and publishes readings behind a `Memory::Seqlock`. `listen(manager)` follows a microphone. |
 | `GlottalSource` | `Nodes::Generator` | `Generator` | A pulse train with the spectral tilt of a voice: the natural carrier for formants. |
+| `RingRecorder` | `Buffers` | `BufferProcessor` | Keeps the last seconds of a buffer in a circular `DynamicSoundStream` (with `append_frames`, so lag taps and `snapshot` see its head) and cuts takes. Requests and takes travel on `Memory::SweepList`; the cut happens on the processing thread. |
+| `VoiceInput` | `Buffers` | listener bundle | One microphone through one buffer, in a fixed order: `RingRecorder`, `EnvelopeProcessor`, `FormantProcessor` (which silences last). Takes the `BufferManager`. |
+| `Looper` | `Kriya` | `TapSet` owner | Loops takes in numbered slots with per-slot speed (negative is backwards), level and stutter, and echoes a live ring with lag taps. Takes the `BufferManager`, `TaskScheduler` and buffer size. |
 | `FormantTransfer` | `Nodes::Network` | `RelationNetwork` + `ResonatorNetwork` | A talk-box. The relation glides the tracked formants (with `envelope_follow` in `Derive`), smooths the loudness and gates on voicing; the resonators shape any carrier with them. Shift the formants, or draw a vowel by hand. |
 
 Nodes are the per-sample path and buffers are the per-block path. Neither is built on the other: both call the same kernel.
@@ -45,6 +48,9 @@ mf_follow/
         FormantProcessor.hpp / .cpp     # formants of a buffer or microphone
         GlottalSource.hpp / .cpp        # voice-like carrier
         FormantTransfer.hpp / .cpp      # talk-box: relation into resonators
+        RingRecorder.hpp / .cpp         # ring of the recent past, takes
+        VoiceInput.hpp / .cpp           # microphone: record, follow, track
+        Looper.hpp / .cpp               # TapSet loops and echoes
     test/
         CMakeLists.txt
         test_mf_follow.cpp              # envelope
@@ -147,6 +153,27 @@ void compose()
 
 `FormantTransfer` registers nothing: route its two networks wherever the application runs networks. Its relation keeps a fixed slot layout (F1..F3 heard, F1..F3 tracked, loudness raw and smoothed, voiced), so other networks can map from it too. `set_manual({f1, f2, f3})` speaks a vowel chosen by hand, with no voice at all, until `clear_manual()`.
 
+### Record and loop
+
+```cpp
+void compose()
+{
+    auto voice = Buffers::VoiceInput::listen(*get_buffer_manager(), { .sample_rate = 48000.0, .ring_seconds = 30.0 });
+    auto looper = std::make_shared<Kriya::Looper>(*get_buffer_manager(), *get_scheduler(), Config::get_buffer_size());
+
+    // Take the last two seconds; it is cut on the processing thread and collected here.
+    voice->recorder()->request_take(96000);
+    schedule_metro(1.0 / 60.0, [voice, looper] {
+        while (auto take = voice->recorder()->collect())
+            looper->add(take->stream, { .speed = 1.0, .level = 0.8 });
+    });
+
+    looper->echo(voice->recorder()->ring(), 0.35, 0.4);    // the live voice, 0.35 s late
+}
+```
+
+Mark a moment with `recorder()->frames()` and cut from it with `request_take_since(mark, preroll)`: with `FormantTransfer::on_voice` start and stop, every word you say becomes a take. `looper->speed(slot, -1.0)` plays a loop backwards from where it is. The managers are the caller's; nothing here reaches the engine itself.
+
 ### Use the kernel directly
 
 ```cpp
@@ -189,7 +216,7 @@ cmake --build test/build --parallel
 ./test/build/test_formant
 ```
 
-No audio device needed. `test_mf_follow` checks the attack and release times against their definition, that RMS of a sine settles at A / sqrt(2), the decibel functions, every output mode of the processor (including sidechain, gain law, several buffers, silent-block skipping and silencing, parameter changes between blocks), that the node and the processor agree sample for sample, input nodes, save and restore, and tick hooks.
+No audio device needed. `test_mf_follow` checks the attack and release times against their definition, that RMS of a sine settles at A / sqrt(2), the decibel functions, every output mode of the processor (including sidechain, gain law, several buffers, silent-block skipping and silencing, parameter changes between blocks), that the node and the processor agree sample for sample, input nodes, save and restore, tick hooks, and the `RingRecorder`: frame counting, takes cut on the processing thread with exactly the last samples, takes since a mark with pre-roll, capping at the ring and skipping empty blocks.
 
 `test_formant` checks `GlottalSource`, the LPC functions on a known sine, the tracker on three synthetic vowels over a noise bed, that a steady fan alone is never voice, `FormantProcessor` fed block by block, and `FormantTransfer`: formants glide from a neutral vowel to the tracked one and the resonators follow, the voiced slot and its event, loudness, shift, manual vowels and silence. Each exits with zero when everything passes.
 
