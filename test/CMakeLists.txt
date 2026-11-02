@@ -64,6 +64,16 @@ target_link_libraries(test_mf_follow PRIVATE mf_follow MayaFlux::MayaFluxLib)
 
 add_test(NAME mf_follow COMMAND test_mf_follow)
 
+add_executable(test_formant
+    test_formant.cpp
+    $<TARGET_OBJECTS:mf_follow>
+)
+
+target_precompile_headers(test_formant REUSE_FROM mf_follow)
+target_link_libraries(test_formant PRIVATE mf_follow MayaFlux::MayaFluxLib)
+
+add_test(NAME formant COMMAND test_formant)
+
 if(UNIX)
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E create_symlink

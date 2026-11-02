@@ -1,10 +1,10 @@
 # mf_follow
 
-A MayaFlux community module for following the envelope of a signal.
+A MayaFlux community module for following a voice or any signal: how loud it is, which formants it has, and what another sound does with them.
 
-It measures how loud a signal is, sample by sample or block by block, with separate attack and release times, in peak or RMS mode. One Kinesis kernel does the measuring; a buffer processor and a node run it for the two ways MayaFlux processes audio, and they produce exactly the same numbers on the same samples.
+It measures loudness sample by sample or block by block, with separate attack and release times, in peak or RMS mode. One Kinesis kernel does the measuring; a buffer processor and a node run it for the two ways MayaFlux processes audio, and they produce exactly the same numbers on the same samples. It tracks the first three formants of a voice with linear prediction and tells speech from steady noise. And it passes those formants through a `RelationNetwork` into a `ResonatorNetwork`, so any carrier speaks with your vowels.
 
-Needs MayaFlux 1.0.0 or newer. Does not need Lila.
+Needs MayaFlux 1.0.0 or newer. Does not need Lila. Nothing in it reaches the engine through `API/`: what needs a buffer manager takes one.
 
 ---
 
@@ -16,8 +16,16 @@ Needs MayaFlux 1.0.0 or newer. Does not need Lila.
 | `amplitude_to_db`, `db_to_amplitude` | `Kinesis::Discrete` | free functions | Decibel conversion. MayaFlux has none. |
 | `EnvelopeProcessor` | `Buffers` | `BufferProcessor` | Follows whole audio blocks. Publishes the envelope, replaces the block with it, or applies it as a gain, measured on the buffer itself or on a sidechain buffer. |
 | `EnvelopeFollower` | `Nodes::Filters` | `Node` | Follows one sample at a time, in a chain (`source >> follower`) or with an input node, like `IIR`. |
+| `levinson_durbin`, `lpc_envelope_db`, `spectral_peaks` | `Kinesis::Discrete` | free functions | Linear prediction from an autocorrelation, the envelope of the resulting filter in dB, and refined peaks of any sampled curve. |
+| `VoiceGate` | `Kinesis` | stateful class | Decides frame by frame whether a voice is present or only steady noise, from `Stochastic::Estimate`, `MotionChannel` and `SymbolicTrajectory`. |
+| `FormantTracker` | `Kinesis` | stateful class | Frame in, `FormantReading` (F1..F3, voiced, rms) out. No buffers, no threads. |
+| `FormantProcessor` | `Buffers` | `BufferProcessor` | Runs a `FormantTracker` on the audio passing through a buffer and publishes readings behind a `Memory::Seqlock`. `listen(manager)` follows a microphone. |
+| `GlottalSource` | `Nodes::Generator` | `Generator` | A pulse train with the spectral tilt of a voice: the natural carrier for formants. |
+| `FormantTransfer` | `Nodes::Network` | `RelationNetwork` + `ResonatorNetwork` | A talk-box. The relation glides the tracked formants (with `envelope_follow` in `Derive`), smooths the loudness and gates on voicing; the resonators shape any carrier with them. Shift the formants, or draw a vowel by hand. |
 
 Nodes are the per-sample path and buffers are the per-block path. Neither is built on the other: both call the same kernel.
+
+The formant pieces began as the [mf_formant](https://github.com/kdlydia/mf_formant) prototype and are reworked here to the same conventions as the rest of the module.
 
 ---
 
@@ -28,12 +36,19 @@ mf_follow/
     mf_follow.cmake         # CMake module definition
     community.json          # manifest (Weave reads this)
     src/
-        Envelope.hpp / .cpp
-        EnvelopeProcessor.hpp / .cpp
-        EnvelopeFollower.hpp / .cpp
+        Envelope.hpp / .cpp             # envelope kernels, dB
+        EnvelopeProcessor.hpp / .cpp    # block envelope follower
+        EnvelopeFollower.hpp / .cpp     # per-sample envelope node
+        Lpc.hpp / .cpp                  # linear prediction
+        VoiceGate.hpp / .cpp            # voice versus steady noise
+        FormantTracker.hpp / .cpp       # F1..F3 from a frame
+        FormantProcessor.hpp / .cpp     # formants of a buffer or microphone
+        GlottalSource.hpp / .cpp        # voice-like carrier
+        FormantTransfer.hpp / .cpp      # talk-box: relation into resonators
     test/
         CMakeLists.txt
-        test_mf_follow.cpp
+        test_mf_follow.cpp              # envelope
+        test_formant.cpp                # formants and talk-box
 ```
 
 ---
@@ -109,6 +124,29 @@ follower->on_tick([](Nodes::Filters::EnvelopeContext& ctx) {
 
 Or give it an input node: `std::make_shared<Nodes::Filters::EnvelopeFollower>(voice, 0.01, 0.2)`.
 
+### Follow formants and speak through another sound
+
+```cpp
+void compose()
+{
+    auto formants = Buffers::FormantProcessor::listen(*get_buffer_manager());
+    auto buzz = std::make_shared<Nodes::Generator::GlottalSource>(110.0F);
+
+    auto talk = std::make_shared<Nodes::Network::FormantTransfer>(formants, buzz,
+        Nodes::Network::FormantTransferConfig { .sample_rate = static_cast<double>(Config::get_sample_rate()) });
+
+    talk->relation() | Audio[0];        // decides; publishes no audio
+    talk->voice() | Audio[{ 0, 1 }];    // the resonators, speaking
+
+    talk->set_shift(0.8);               // bigger: every formant x 0.8
+    talk->on_voice([] { /* a voiced sound began */ });
+}
+```
+
+`formants->latest()` gives F1, F2, F3, the RMS and whether the frame is voiced, from any thread. Stay quiet for about a second at the start so the voice gate can learn the room.
+
+`FormantTransfer` registers nothing: route its two networks wherever the application runs networks. Its relation keeps a fixed slot layout (F1..F3 heard, F1..F3 tracked, loudness raw and smoothed, voiced), so other networks can map from it too. `set_manual({f1, f2, f3})` speaks a vowel chosen by hand, with no voice at all, until `clear_manual()`.
+
 ### Use the kernel directly
 
 ```cpp
@@ -148,9 +186,12 @@ Layout of the `coefs` array: `[attack_decay, release_decay, mode, level]`.
 cmake -G Ninja -B test/build -S test -DCMAKE_BUILD_TYPE=Release
 cmake --build test/build --parallel
 ./test/build/test_mf_follow
+./test/build/test_formant
 ```
 
-No audio device needed. The test checks the attack and release times against their definition, that RMS of a sine settles at A / sqrt(2), the decibel functions, every output mode of the processor (including sidechain, gain law, several buffers, silent-block skipping and parameter changes between blocks), that the node and the processor agree sample for sample, input nodes, save and restore, and tick hooks. The exit code is zero when everything passes.
+No audio device needed. `test_mf_follow` checks the attack and release times against their definition, that RMS of a sine settles at A / sqrt(2), the decibel functions, every output mode of the processor (including sidechain, gain law, several buffers, silent-block skipping and silencing, parameter changes between blocks), that the node and the processor agree sample for sample, input nodes, save and restore, and tick hooks.
+
+`test_formant` checks `GlottalSource`, the LPC functions on a known sine, the tracker on three synthetic vowels over a noise bed, that a steady fan alone is never voice, `FormantProcessor` fed block by block, and `FormantTransfer`: formants glide from a neutral vowel to the tracked one and the resonators follow, the voiced slot and its event, loudness, shift, manual vowels and silence. Each exits with zero when everything passes.
 
 ---
 

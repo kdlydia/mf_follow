@@ -4,5 +4,5 @@
   "min_version": "1.0.0",
   "needs_lila": false,
   "licence": "GPLv3",
-  "description": "Envelope following for audio: attack/release peak and RMS kernels in Kinesis, a block-level EnvelopeProcessor with feature, signal and gain outputs and sidechain input, and a per-sample EnvelopeFollower node."
+  "description": "Following a voice: attack/release peak and RMS envelope kernels with a block-level EnvelopeProcessor and a per-sample EnvelopeFollower node, LPC formant tracking (F1 to F3) with a voice gate and a FormantProcessor, and a talk-box that routes tracked formants through a RelationNetwork into a ResonatorNetwork."
 }
