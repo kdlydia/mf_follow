@@ -8,6 +8,7 @@
 #include "FormantTransfer.hpp"
 #include "GlottalSource.hpp"
 #include "Lpc.hpp"
+#include "VocalTract.hpp"
 
 #include <MayaFlux/Kinesis/Discrete/Coefficients.hpp>
 #include <MayaFlux/Kinesis/Discrete/Convolution.hpp>
@@ -321,6 +322,62 @@ void test_transfer()
     check(talk.loudness() < 0.05 && !talk.is_manual(), "clearing manual returns to the tracker");
 }
 
+void test_tract()
+{
+    std::printf("VocalTract, vowel shapes through the waveguide\n");
+
+    std::map<std::string, std::vector<double>> found;
+    for (const auto& v : Kinesis::vowel_targets()) {
+        const auto d = Kinesis::tract_diameters(v.shape, 44);
+        const auto db = Kinesis::tract_response_db(d, 2.0 * k_rate, 600, 5000.0);
+        auto f = Kinesis::tract_formants(db, 5000.0, 3);
+        f.resize(3, 0.0);
+        found[v.symbol] = f;
+        std::printf("  /%s/  F1 %5.0f  F2 %5.0f  F3 %5.0f\n", v.symbol, f[0], f[1], f[2]);
+        if (std::getenv("TRACT_DEBUG")) {
+            std::printf("      diameters:");
+            for (size_t i = 0; i < d.size(); i += 4)
+                std::printf(" %.2f", d[i]);
+            std::printf("\n      peaks:");
+            for (size_t i = 1; i + 1 < db.size(); ++i)
+                if (db[i] > db[i - 1] && db[i] >= db[i + 1])
+                    std::printf(" %.0f(%.0f)", static_cast<double>(i) * 5000.0 / 599.0, db[i]);
+            std::printf("\n");
+        }
+    }
+
+    check(found["a"][0] > found["i"][0] && found["a"][0] > found["u"][0], "/a/ has the highest F1 of a, i, u");
+    check(found["i"][1] > found["a"][1] && found["a"][1] > found["u"][1], "F2 falls from /i/ through /a/ to /u/");
+    check(found["i"][0] < found["e"][0] && found["e"][0] < found["a"][0], "F1 rises from /i/ through /e/ to /a/");
+    check(found["u"][1] < found["o"][1] + 300.0, "/u/ is at least as back (low F2) as /o/");
+
+    const auto seq = Kinesis::vowels_in("Nel mezzo del cammin di nostra vita");
+    std::string skeleton;
+    for (const auto& v : seq)
+        skeleton += v.symbol;
+    std::printf("  vowels of \"Nel mezzo del cammin di nostra vita\": %s\n", skeleton.c_str());
+    check(skeleton == "eeoeaiioaia", "the sentence's vocalic skeleton is read in order");
+    check(Kinesis::vowels_in("perch\xC3\xA8 cos\xC3\xAC").back().symbol == std::string("i")
+            && Kinesis::vowels_in("perch\xC3\xA8")[1].symbol == std::string("E"),
+        "grave accents give open vowels, other accents the plain vowel");
+
+    Nodes::Network::VocalTract tract(44, k_rate);
+    tract.set_exciter(std::make_shared<Nodes::Generator::GlottalSource>(120.0F));
+    tract.set_shape(Kinesis::vowel_target("a")->shape);
+    for (int b = 0; b < 40; ++b)
+        tract.process_batch(512);
+    const auto out = tract.get_audio_buffer();
+    double peak = 0.0;
+    if (out)
+        for (double v : *out)
+            peak = std::max(peak, std::abs(v));
+    check(peak > 1e-3 && peak < 50.0, "the tract sounds and stays stable");
+    const auto d = tract.diameters();
+    const auto target = Kinesis::tract_diameters(Kinesis::vowel_target("a")->shape, 44);
+    check(std::abs(d[30] - target[30]) < 0.05, "the shape reaches its target");
+    check(tract.get_node_count() == 44 && tract.get_node_output(20).has_value(), "each section is a node with its pressure");
+}
+
 } // namespace
 
 int main()
@@ -330,6 +387,7 @@ int main()
     test_tracker();
     test_processor();
     test_transfer();
+    test_tract();
 
     std::printf("%s\n", g_failures == 0 ? "PASS" : "FAIL");
     return g_failures == 0 ? 0 : 1;
