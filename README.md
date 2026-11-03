@@ -4,7 +4,7 @@ A MayaFlux community module for following a voice or any signal: how loud it is,
 
 It measures loudness sample by sample or block by block, with separate attack and release times, in peak or RMS mode. One Kinesis kernel does the measuring; a buffer processor and a node run it for the two ways MayaFlux processes audio, and they produce exactly the same numbers on the same samples. It tracks the first three formants of a voice with linear prediction and tells speech from steady noise. And it passes those formants through a `RelationNetwork` into a `ResonatorNetwork`, so any carrier speaks with your vowels.
 
-New here? Start with [TUTORIAL.md](TUTORIAL.md).
+New here? Start with [TUTORIAL.md](TUTORIAL.md). Progress notes are in [LOG.md](LOG.md).
 
 Needs MayaFlux 1.0.0 or newer. Does not need Lila. Nothing in it reaches the engine through `API/`: what needs a buffer manager takes one.
 
@@ -27,6 +27,7 @@ Needs MayaFlux 1.0.0 or newer. Does not need Lila. Nothing in it reaches the eng
 | `VoiceInput` | `Buffers` | listener bundle | One microphone through one buffer, in a fixed order: `RingRecorder`, `EnvelopeProcessor`, `FormantProcessor` (which silences last). Takes the `BufferManager`. |
 | `Looper` | `Kriya` | `TapSet` owner | Loops takes in numbered slots with per-slot speed (negative is backwards), level and stutter, and echoes a live ring with lag taps. Takes the `BufferManager`, `TaskScheduler` and buffer size. |
 | `SliceSequencer` | `Kriya` | `pattern` + `SamplingPipeline` | Cuts a take into chops and plays them on a 16th-note clock from a step grid (velocity per chop and step, pitch per step, reverse per chop) and from a queue any thread can push hits onto, quantised to the next step. Tempo and swing per bar. Takes are swapped live. |
+| `VocalTract` | `Nodes::Network` | waveguide network | A vocal tract as a Kelly-Lochbaum waveguide: 44 short sections whose widths are the vowel. Shapes from front, height and rounding, the seven Italian vowels, and `vowels_in` for the vowels of a sentence. Each section's pressure is a node output. |
 | `FormantTransfer` | `Nodes::Network` | `RelationNetwork` + `ResonatorNetwork` | A talk-box. The relation glides the tracked formants (with `envelope_follow` in `Derive`), smooths the loudness and gates on voicing; the resonators shape any carrier with them. Shift the formants, or draw a vowel by hand. |
 
 Nodes are the per-sample path and buffers are the per-block path. Neither is built on the other: both call the same kernel.
@@ -55,6 +56,7 @@ mf_follow/
         VoiceInput.hpp / .cpp           # microphone: record, follow, track
         Looper.hpp / .cpp               # TapSet loops and echoes
         SliceSequencer.hpp / .cpp       # chops of a take, played in time
+        VocalTract.hpp / .cpp           # waveguide vocal tract, vowel shapes
     test/
         CMakeLists.txt
         test_mf_follow.cpp              # envelope
