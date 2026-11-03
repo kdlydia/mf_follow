@@ -161,18 +161,23 @@ std::vector<double> tract_response_db(std::span<const double> diameters, double 
         return std::vector<double>(bins, -120.0);
 
     StaticTract tract(diameters);
-    constexpr size_t length = 4096;
+    constexpr size_t length = 2048;
     std::vector<double> impulse(length);
     for (size_t t = 0; t < length; ++t)
         impulse[t] = kelly_lochbaum(tract.right, tract.left, tract.next_right, tract.next_left,
             tract.reflection, t == 0 ? 1.0 : 0.0, k_glottal, k_lip, k_tube_loss);
 
+    // One DFT bin per frequency, with a rotating phasor instead of a sine and cosine per sample.
     std::vector<double> db(bins);
     for (size_t b = 0; b < bins; ++b) {
-        const double w = 2.0 * std::numbers::pi * (top_hz * static_cast<double>(b) / static_cast<double>(bins - 1)) / rate;
+        const double w = 2.0 * std::numbers::pi * (top_hz * static_cast<double>(b) / static_cast<double>(std::max<size_t>(bins, 2) - 1)) / rate;
+        const std::complex<double> turn = std::polar(1.0, -w);
+        std::complex<double> phasor { 1.0, 0.0 };
         std::complex<double> sum {};
-        for (size_t t = 0; t < length; ++t)
-            sum += impulse[t] * std::polar(1.0, -w * static_cast<double>(t));
+        for (size_t t = 0; t < length; ++t) {
+            sum += impulse[t] * phasor;
+            phasor *= turn;
+        }
         db[b] = 20.0 * std::log10(std::max(std::abs(sum), 1e-9));
     }
     return db;
@@ -229,6 +234,7 @@ VocalTract::VocalTract(size_t sections, double sample_rate)
         m_shown_diameter[i].store(m_current[i]);
     }
     update_reflections();
+    set_output_mode(OutputMode::AUDIO_SINK);
 }
 
 void VocalTract::set_target(std::span<const double> diameters)

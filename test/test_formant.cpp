@@ -372,6 +372,27 @@ void test_tract()
         for (double v : *out)
             peak = std::max(peak, std::abs(v));
     check(peak > 1e-3 && peak < 50.0, "the tract sounds and stays stable");
+    if (std::getenv("TRACT_DEBUG")) {
+        for (const auto& v : Kinesis::vowel_targets()) {
+            Nodes::Network::VocalTract probe(44, k_rate);
+            probe.set_exciter(std::make_shared<Nodes::Generator::GlottalSource>(120.0F));
+            probe.set_movement(0.0);
+            probe.set_shape(v.shape);
+            double p = 0.0, e = 0.0;
+            size_t n = 0;
+            for (int b = 0; b < 60; ++b) {
+                probe.process_batch(512);
+                if (b < 20)
+                    continue;
+                for (double x : *probe.get_audio_buffer()) {
+                    p = std::max(p, std::abs(x));
+                    e += x * x;
+                    ++n;
+                }
+            }
+            std::printf("      /%s/ output peak %.3f rms %.3f\n", v.symbol, p, std::sqrt(e / static_cast<double>(n)));
+        }
+    }
     const auto d = tract.diameters();
     const auto target = Kinesis::tract_diameters(Kinesis::vowel_target("a")->shape, 44);
     check(std::abs(d[30] - target[30]) < 0.05, "the shape reaches its target");
